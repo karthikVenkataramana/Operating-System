@@ -1,0 +1,60 @@
+Initial thoughts:
+  - Implementing shared memory is evil in Linux! Initially, we thought of using vectors which are included in C++ version 11 in place of Linked lists.
+  - In the process, we realized that default implementation of vector doesn't allow it to be shared among different processes.
+  - Then, we thought of using Boost libraries for shared memory implementation.(here: http://www.boost.org/doc/libs/1_55_0/doc/html/interprocess/sharedmemorybetweenprocesses.html).
+  - After playing with Boost functions for a while, we concluded that writing our own data structure is easier and more straight-forward than using complex inbuilt functions of Boost library.
+
+Getting hands dirty:
+  - Since the size of lists change dynamically, we decided to use linked list for underlying implementation.
+  - The first thing we needed was a data structure for each 'BLOCK'  in linked list.
+  - This is implemented in the file "block.h" where each block holds an integer and pointer to next Block.
+  - Then, we needed a data structure to represent a 'LIST' which would have a pointer to the first block and list operations(link & unlink).
+  - This is implemented in the file "list.h".
+
+Shared list implementation:
+  - Now that we got our data structures set up, our next task was to implement the shared memory itself.
+  - First, we created three lists (Free list , list 1 and list 2) in the shared memory, initially all empty.
+  - Then, we create a shared memory of size N, to store each of the N blocks.
+  - It is super important to note that, we are not allowed to use new or malloc() as they create storage not in shared memory but in memory which compiler decides. We couldn't figure this problem for days!
+
+Synchronization mechanism:
+  - After getting through the difficult part, which was shared memory implementation, implementing shared semaphores felt lot easier.
+  - Getting to the synchronization part, it's not very hard to determine the number of semaphores to be used for this problem.
+  - We felt, we would require 3 mutexes to maintain mutual exclusion for 3 shared memory resources (freelist, list1 and list2).
+  - We require another 3 to guard the boundary conditions of our lists(i.e cannot let free list store more than N blocks, similarly with list1 and list2 etc.)
+  - At this point, we thought this is all that is required to avoid deadlock but as professor pointed out in the class, there is one other important condition that we were still missing out on.
+  - The condition is that Process 1 cannot execute N times because that would use up entire free list which leaves process 2 to wait on a block in free list which is not available!
+  - This was a potential deadlock situation. an easy work around is to make process 1 execute at most N -1 times and have at least 1 block for P2 to use. This can be accomplished using a counting semaphore.
+  - This would complete our list of semaphores.
+
+  Summing up the semaphores used:
+       p1 - A counting semaphore initialized to (N -1) which governs the above discussed condition.
+       fl - A counting semaphore initialized to N, since free list initially has N blocks.
+       l1 - A counting semaphore initialized to 0, since list 1 initially has no blocks.
+       l2 - A counting semaphore initialized to 0, since list 2 initially has no blocks.
+       flMutex - A binary semaphore initialized to 1, to allow only one process to access freelist at a given time.
+       l1Mutex - A binary semaphore initialized to 1, to allow only one process to access list 1 at a given time.
+       l2Mutex - A binary semaphore initialized to 1, to allow only one process to access list 2 at a given time.
+
+  - After setting up our semaphores, things went a lot smoother. Whenever we are accessing a shared list, we lock it using corresponding mutex. After we are done using the list, we let the other processes access the shared list by unlocking the mutex.
+  - That solved the Mutual exclusion problem.
+  - We set up the counting semaphores in such a way that whenever we are using the resource(unlink() operation) we are doing P operation on corresponding mutex.
+  - Similarly, we do the V operation on corresponding semaphore, whenever we are returning the resource(link() operation).
+  - That solved the limited resource problem (of size N).
+  - Detailed psuedocode is attached as "psuedocode.jpg" image file.
+
+Did we avoid deadlock?
+  - Yes! we avoided potential deadlock by protecting our shared memory (Mutual exclusion) using semaphores.
+  - It is easy to observe that we are maintaining exactly N protected blocks of memory at any given time.
+
+Did we obtain maximum concurrency?
+  - For the most part, Yes! Since we are not unnecessarily making the processes wait unless it is explicitly required.
+  - Well, it is not possible to make processes execute 100% concurrently since they are working on common resources, we are at least not waiting on processes for resources which already have access to!
+
+Can we use less than 7 semaphores?
+  - Probably not! Since, we need 3 to provide mutual exclusion on 3 shared lists, 3 to check the range of the lists and 1 to enforce the condition which professor pointed out!
+
+Future thoughts!
+  - There is one particular thing which caught our attention. Can we print the list sizes under each process before other processes modify it?
+  - Indeed we can do that by using one extra semaphore, which does not allow other processes to access either of these lists while Process 1 is printing it!
+  - But that would exacerbate concurrency problem which is the prime objective of this project. So, we decided not use the extra semaphore.
